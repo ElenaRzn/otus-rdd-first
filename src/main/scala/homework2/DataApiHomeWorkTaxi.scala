@@ -1,10 +1,11 @@
 package homework2
 
 import org.apache.flink.table.shaded.com.ibm.icu.text.SimpleDateFormat
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.functions.{broadcast, col, desc, hour}
+import org.apache.spark.sql.{SparkSession, functions}
+import org.apache.spark.sql.functions.{broadcast, col, count, date_format, days, desc, hour, stddev}
 
 import java.sql.Timestamp
+import java.util.Properties
 
 object DataApiHomeWorkTaxi extends App {
 
@@ -58,54 +59,67 @@ object DataApiHomeWorkTaxi extends App {
   import spark.implicits._
   val dateFormat: SimpleDateFormat = new SimpleDateFormat("HH")
 
-  //val dateFormat: SimpleDateFormat = new SimpleDateFormat("hh")
-  //   taxiFactsDF.rdd
-  //    .foreach(r => {
-  //      println(dateFormat.format(r.getTimestamp(2)))
-  //    }
-  //    )
-  //*************************
-  println("ddddddddddddddddddddddddddd")
-  val taxiFactsRdd1 = taxiFactsDF
-    .as[TaxiRide]
-    .rdd.groupBy(fact => dateFormat.format(fact.tpep_pickup_datetime))
-    .sortBy(fact => fact._2.size, false)
-    .foreach(x => println(x._1 + "->" + x._2.size))
+// *************************
+//  вариант 1 - неоптимальный
+//  val taxiFactsRdd1 = taxiFactsDF
+//    .as[TaxiRide]
+//    .rdd.groupBy(fact => dateFormat.format(fact.tpep_pickup_datetime))
+//    .sortBy(fact => fact._2.size, false)
+//    .foreach(x => println(x._1 + "->" + x._2.size))
 
-  println("ddddddddddddddddddddddddddd")
+  // *************************
+  //  вариант 2 - итоговый
   val initialCount = 0;
   val addToCounts = (n: Int, t:Iterable[TaxiRide]) => n + t.size
   val sumPartitionCounts = (p1: Int, p2: Int) => p1 + p2
 
+  println("ddddddddddddddddddddddddddddd")
   val taxiFactsRdd = taxiFactsDF
     .as[TaxiRide]
     .rdd.groupBy(fact => dateFormat.format(fact.tpep_pickup_datetime))
     .aggregateByKey(initialCount)(addToCounts, sumPartitionCounts)
     .sortBy(fact => fact._2, false)
-    //    .map(x => x._1)
-    .foreach(x => println(x._1 + "->" + x._2))
-
-  println("dddddddddddddddddddddddddd")
-  taxiFactsDF
-    .as[TaxiRide]
-    .withColumn("hour", hour(col("tpep_pickup_datetime")))
-    .groupBy(col("hour")).count()
-    .show
-
-  println("dfffffffffffffffffffff")
-  val taxiFactsRdd3 = taxiFactsDF
-    .as[TaxiRide]
-    .rdd.map(fact => dateFormat.format(fact.tpep_pickup_datetime)).distinct().foreach(println(_))
+    .map(x => s"${x._1} ${x._2}")
 
 
-  //*************************
+  taxiFactsRdd.persist()
+  taxiFactsRdd.foreach(println)
+  //TODO - раскомментируй
+//  taxiFactsRdd.saveAsTextFile("count_by_hours.txt")
 
 
-//  taxiFactsDF.select("tpep_pickup_datetime")
+  // *************************
+  //  Проверка через DataFrame
+//  taxiFactsDF
+//    .as[TaxiRide]
 //    .withColumn("hour", hour(col("tpep_pickup_datetime")))
-//    .drop("tpep_pickup_datetime")
-//    .groupBy("hour").count()
-//    .sort(col("count").desc)
-//    .show()
+//    .groupBy(col("hour")).count()
+//    .show
+
+  //бщее количество поездок, среднее расстояние, среднеквадратическое отклонение, минимальное и максимальное расстояние
+  println("-- Task 3")
+
+  val connectionProperties = new Properties()
+
+  connectionProperties.put("user", user)
+  connectionProperties.put("password", password)
+//  val driverClass = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+//  connectionProperties.setProperty("Driver", driverClass)
+
+  val statistics = taxiFactsDF
+      .as[TaxiRide]
+      .withColumn("days", date_format(col("tpep_pickup_datetime"), "dd-MM-yyyy"))
+      .groupBy(col("days"))
+    .agg(count("trip_distance"),
+      functions.avg("trip_distance"),
+      functions.min("trip_distance"),
+      functions.max("trip_distance"),
+      stddev("trip_distance"))
+
+  statistics.show()
+//    statistics.write.jdbc(url=url, table="test_result", connectionProperties=connectionProperties)
+
+
+
 }
 
