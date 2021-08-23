@@ -36,8 +36,9 @@ object DataApiHomeWorkTaxi extends App {
     .count()
     .orderBy(col("count").desc)
 
+  boroughPopularity.persist()
   boroughPopularity.show(10)
-//  boroughPopularity.write.parquet("boroughPopularity.parquet")
+  boroughPopularity.write.parquet("boroughPopularity.parquet")
 
   println("-- Task 2")
   case class TaxiRide(
@@ -59,16 +60,6 @@ object DataApiHomeWorkTaxi extends App {
   import spark.implicits._
   val dateFormat: SimpleDateFormat = new SimpleDateFormat("HH")
 
-// *************************
-//  вариант 1 - неоптимальный
-//  val taxiFactsRdd1 = taxiFactsDF
-//    .as[TaxiRide]
-//    .rdd.groupBy(fact => dateFormat.format(fact.tpep_pickup_datetime))
-//    .sortBy(fact => fact._2.size, false)
-//    .foreach(x => println(x._1 + "->" + x._2.size))
-
-  // *************************
-  //  вариант 2 - итоговый
   val initialCount = 0;
   val addToCounts = (n: Int, t:Iterable[TaxiRide]) => n + t.size
   val sumPartitionCounts = (p1: Int, p2: Int) => p1 + p2
@@ -84,27 +75,15 @@ object DataApiHomeWorkTaxi extends App {
 
   taxiFactsRdd.persist()
   taxiFactsRdd.foreach(println)
-  //TODO - раскомментируй
-//  taxiFactsRdd.saveAsTextFile("count_by_hours.txt")
+  taxiFactsRdd.saveAsTextFile("count_by_hours.txt")
 
 
-  // *************************
-  //  Проверка через DataFrame
-//  taxiFactsDF
-//    .as[TaxiRide]
-//    .withColumn("hour", hour(col("tpep_pickup_datetime")))
-//    .groupBy(col("hour")).count()
-//    .show
-
-  //бщее количество поездок, среднее расстояние, среднеквадратическое отклонение, минимальное и максимальное расстояние
   println("-- Task 3")
 
   val connectionProperties = new Properties()
 
   connectionProperties.put("user", user)
   connectionProperties.put("password", password)
-//  val driverClass = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
-//  connectionProperties.setProperty("Driver", driverClass)
 
   val statistics = taxiFactsDF
       .as[TaxiRide]
@@ -116,8 +95,9 @@ object DataApiHomeWorkTaxi extends App {
       functions.max("trip_distance"),
       stddev("trip_distance"))
 
-  statistics.show()
-//    statistics.write.jdbc(url=url, table="test_result", connectionProperties=connectionProperties)
+  statistics.persist()
+  statistics.foreach(x => println(x))
+  statistics.write.jdbc(url=url, table="distance_statistics_by_day", connectionProperties=connectionProperties)
 
 
 
