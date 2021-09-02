@@ -1,8 +1,9 @@
 package homework2
 
 import org.apache.flink.table.shaded.com.ibm.icu.text.SimpleDateFormat
-import org.apache.spark.sql.{SparkSession, functions}
-import org.apache.spark.sql.functions.{broadcast, col, count, date_format, days, desc, hour, stddev}
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession, functions}
 
 import java.sql.Timestamp
 import java.util.Properties
@@ -20,21 +21,19 @@ object DataApiHomeWorkTaxi extends App {
   val password = "docker"
 
 
-  val taxiFactsDF = spark.read.load("src/main/resources/data/yellow_taxi_jan_25_2018")
+  val taxiFactsDF = readParquet("src/main/resources/data/yellow_taxi_jan_25_2018")(spark)
+
   taxiFactsDF.printSchema()
   println(taxiFactsDF.count())
   taxiFactsDF.show(10)
 
-  val taxiZones = spark.read.option("header",true).option("inferSchema", true).csv("src/main/resources/data/taxi_zones.csv")
+  val taxiZones = readCSV("src/main/resources/data/taxi_zones.csv")(spark)
   taxiZones.printSchema()
   println(taxiZones.count())
 
   println("-- Task 1")
 
-  val boroughPopularity = taxiFactsDF.join(broadcast(taxiZones), col("DOLocationID") === col("LocationId"), "left")
-    .groupBy(col("Borough"))
-    .count()
-    .orderBy(col("count").desc)
+  val boroughPopularity = orderByBoroughPopularity(taxiFactsDF, taxiZones)
 
   boroughPopularity.persist()
   boroughPopularity.show(10)
@@ -60,17 +59,7 @@ object DataApiHomeWorkTaxi extends App {
   import spark.implicits._
   val dateFormat: SimpleDateFormat = new SimpleDateFormat("HH")
 
-  val initialCount = 0;
-  val addToCounts = (n: Int, t:Iterable[TaxiRide]) => n + t.size
-  val sumPartitionCounts = (p1: Int, p2: Int) => p1 + p2
-
-  println("ddddddddddddddddddddddddddddd")
-  val taxiFactsRdd = taxiFactsDF
-    .as[TaxiRide]
-    .rdd.groupBy(fact => dateFormat.format(fact.tpep_pickup_datetime))
-    .aggregateByKey(initialCount)(addToCounts, sumPartitionCounts)
-    .sortBy(fact => fact._2, false)
-    .map(x => s"${x._1} ${x._2}")
+  val taxiFactsRdd = countOrdersByTime(taxiFactsDF.as[TaxiRide].rdd, dateFormat)
 
 
   taxiFactsRdd.persist()
@@ -85,21 +74,47 @@ object DataApiHomeWorkTaxi extends App {
   connectionProperties.put("user", user)
   connectionProperties.put("password", password)
 
-  val statistics = taxiFactsDF
-      .as[TaxiRide]
-      .withColumn("days", date_format(col("tpep_pickup_datetime"), "dd-MM-yyyy"))
-      .groupBy(col("days"))
-    .agg(count("trip_distance"),
-      functions.avg("trip_distance"),
-      functions.min("trip_distance"),
-      functions.max("trip_distance"),
-      stddev("trip_distance"))
+  val statistics = calculateTaxiStatistics(taxiFactsDF.as[TaxiRide])
 
   statistics.persist()
   statistics.foreach(x => println(x))
   statistics.write.jdbc(url=url, table="distance_statistics_by_day", connectionProperties=connectionProperties)
 
+  def readParquet(path: String)(implicit spark: SparkSession): DataFrame = spark.read.parquet(path)
 
+  def readCSV(path: String)(implicit spark: SparkSession):DataFrame =
+    spark.read
+      .option("header", "true")
+      .option("inferSchema", "true")
+      .csv(path)
+
+  def orderByBoroughPopularity(df: DataFrame, zones: DataFrame) = {
+    df.join(broadcast(zones), col("DOLocationID") === col("LocationId"), "left")
+      .groupBy(col("Borough"))
+      .count()
+      .orderBy(col("count").desc)
+  }
+
+  def countOrdersByTime(rdd: RDD[TaxiRide], dateFormat: SimpleDateFormat) = {
+    val initialCount = 0;
+    val addToCounts = (n: Int, t:Iterable[TaxiRide]) => n + t.size
+    val sumPartitionCounts = (p1: Int, p2: Int) => p1 + p2
+
+    rdd.groupBy(fact => dateFormat.format(fact.tpep_pickup_datetime))
+      .aggregateByKey(initialCount)(addToCounts, sumPartitionCounts)
+      .sortBy(fact => fact._2, false)
+      .map(x => s"${x._1} ${x._2}")
+  }
+
+  def calculateTaxiStatistics(ds: Dataset[TaxiRide]) = {
+    ds.withColumn("days", date_format(col("tpep_pickup_datetime"), "dd-MM-yyyy"))
+      .groupBy(col("days"))
+      .agg(count("trip_distance"),
+        functions.avg("trip_distance"),
+        functions.min("trip_distance"),
+        functions.max("trip_distance"),
+        stddev("trip_distance"))
+  }
 
 }
 
